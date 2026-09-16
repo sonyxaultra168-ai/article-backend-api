@@ -77,7 +77,13 @@ def rewrite_article():
     elif tone == 'emotional': tone_instruction = "Write in a deeply emotional, empathetic, and storytelling tone that touches the reader's heart."
     elif tone == 'investigative': tone_instruction = "Write in an investigative, mysterious, and analytical tone, focusing on uncovering hidden truths and building suspense."
 
-    base_rules = `You are an elite, award-winning professional journalist and a master storyteller writing exclusively in the **Khmer language**.\nCRITICAL RULES:\n1. PERFECT KHMER: Use flawless standard Khmer spelling and grammar.\n2. SHATTER & INVERT THE STRUCTURE (CRITICAL): You are STRICTLY FORBIDDEN from keeping the original paragraph order. YOU MUST PARSE ALL FACTS FIRST, THEN REBUILD:\n   - RULE A: NEVER start your article with the same information as the original text.\n   - RULE B: INVERTED PYRAMID: You MUST extract the most shocking statistics, the core demand, or the final conclusion from the BOTTOM/MIDDLE of the original text and FORCE it to be your FIRST paragraph.\n   - RULE C: Group remaining facts logically. DO NOT paraphrase sentence-by-sentence.\n`
+    base_rules = """You are an elite, award-winning professional journalist and a master storyteller writing exclusively in the **Khmer language**.
+CRITICAL RULES:
+1. PERFECT KHMER: Use flawless standard Khmer spelling and grammar.
+2. SHATTER & INVERT THE STRUCTURE (CRITICAL): You are STRICTLY FORBIDDEN from keeping the original paragraph order. YOU MUST PARSE ALL FACTS FIRST, THEN REBUILD:
+   - RULE A: NEVER start your article with the same information as the original text.
+   - RULE B: INVERTED PYRAMID: You MUST extract the most shocking statistics, the core demand, or the final conclusion from the BOTTOM/MIDDLE of the original text and FORCE it to be your FIRST paragraph.
+   - RULE C: Group remaining facts logically. DO NOT paraphrase sentence-by-sentence."""
 
     if country != 'កម្ពុជា (Cambodia)':
         if mode == 'generate_new':
@@ -229,7 +235,6 @@ def download_word():
         doc.save(file_stream)
         file_stream.seek(0)
         
-        # សម្រាប់ Mobile ត្រូវ Return ជា File ដោយផ្ទាល់ មិនអាចបើក Save Dialog បានទេ
         return send_file(
             file_stream, 
             as_attachment=True, 
@@ -241,6 +246,5 @@ def download_word():
         return jsonify({'error': f"កំហុសប្រព័ន្ធ: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    # Run លើ Port 10000 សម្រាប់ Render
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
