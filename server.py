@@ -2,6 +2,11 @@ import os
 import re
 import io
 import base64
+import uuid
+import glob
+import subprocess
+import urllib.request
+import stat
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import google.generativeai as genai
@@ -12,8 +17,12 @@ from docx.shared import Pt, RGBColor
 from docx.oxml.ns import qn
 
 app = Flask(__name__)
-# អនុញ្ញាតអោយ App ទូរស័ព្ទ (Capacitor) អាចភ្ជាប់មកបាន
-CORS(app) 
+# អនុញ្ញាតឱ្យ Android App អាចហៅទិន្នន័យបាន (Cross-Origin)
+CORS(app)
+
+CONFIG_DIR = '/tmp' # ប្រើ Folder បណ្តោះអាសន្នលើ Cloud
+YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+YTDLP_EXE = os.path.join(CONFIG_DIR, "yt-dlp")
 
 @app.route('/')
 def index():
@@ -32,7 +41,43 @@ def fetch_url():
         if not text: text = soup.get_text(separator='\n', strip=True)
         return jsonify({'success': True, 'text': text[:20000]}) 
     except Exception as e:
-        return jsonify({'error': "មិនអាចទាញទិន្នន័យពីវេបសាយនេះបានទេ! ⚠️"})
+        return jsonify({'error': f"មិនអាចទាញទិន្នន័យពីវេបសាយនេះបានទេ! ⚠️"})
+
+@app.route('/update_ytdlp', methods=['POST'])
+def update_ytdlp():
+    try:
+        urllib.request.urlretrieve(YTDLP_URL, YTDLP_EXE)
+        st = os.stat(YTDLP_EXE)
+        os.chmod(YTDLP_EXE, st.st_mode | stat.S_IEXEC)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': f"មិនអាច Update បានទេ: {str(e)}"})
+
+@app.route('/download_audio', methods=['POST'])
+def download_audio():
+    url = request.json.get('url', '').strip()
+    if not url: return jsonify({'error': 'សូមបញ្ចូល Link ជាមុនសិន!'})
+    if not os.path.exists(YTDLP_EXE):
+        return jsonify({'error': 'សូមចុចប៊ូតុង Update (ពណ៌ខៀវ) ដើម្បីទាញយកកម្មវិធី YT-DLP ជាមុនសិន!'})
+
+    temp_dir = os.path.join(CONFIG_DIR, 'temp')
+    os.makedirs(temp_dir, exist_ok=True)
+    out_template = os.path.join(temp_dir, f"{uuid.uuid4().hex}.%(ext)s")
+
+    cmd = [YTDLP_EXE, '-x', '--audio-format', 'mp3', '--no-playlist', '-o', out_template, url]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        files = glob.glob(out_template.replace('%(ext)s', 'mp3'))
+        if not files: return jsonify({'error': 'មិនអាចទាញយកសំឡេងពីប្រភពនេះបានទេ! (អាចជាប់ Privacy)'})
+        
+        with open(files[0], 'rb') as f:
+            encoded = base64.b64encode(f.read()).decode('utf-8')
+            
+        os.remove(files[0]) 
+        
+        return jsonify({'success': True, 'audio_base64': 'data:audio/mp3;base64,' + encoded})
+    except Exception as e:
+        return jsonify({'error': 'មានបញ្ហាក្នុងការទាញយក! សូមប្រាកដថា Link ត្រូវនិងមិនមែនជា Private វីដេអូ។'})
 
 @app.route('/scan_models', methods=['POST'])
 def scan_models():
@@ -48,8 +93,10 @@ def scan_models():
                     display = m.display_name
                     if 'exp' in name or 'preview' in name: display = f"[សាកល្បង] {display}"
                     models.append({'id': m.name, 'name': display})
+        
         if not models:
-            return jsonify({'error': 'រកមិនឃើញម៉ូឌែល Gemini ដែលត្រឹមត្រូវទេ!'})
+            return jsonify({'error': 'រកមិនឃើញម៉ូឌែល Gemini ដែលត្រឹមត្រូវទេ! សូមពិនិត្យ Key ម្តងទៀត។'})
+            
         models.sort(key=lambda x: '0' if '2.0' in x['name'] else '1' if '1.5' in x['name'] else '2')
         return jsonify({'success': True, 'models': models})
     except Exception as e:
@@ -77,13 +124,7 @@ def rewrite_article():
     elif tone == 'emotional': tone_instruction = "Write in a deeply emotional, empathetic, and storytelling tone that touches the reader's heart."
     elif tone == 'investigative': tone_instruction = "Write in an investigative, mysterious, and analytical tone, focusing on uncovering hidden truths and building suspense."
 
-    base_rules = """You are an elite, award-winning professional journalist and a master storyteller writing exclusively in the **Khmer language**.
-CRITICAL RULES:
-1. PERFECT KHMER: Use flawless standard Khmer spelling and grammar.
-2. SHATTER & INVERT THE STRUCTURE (CRITICAL): You are STRICTLY FORBIDDEN from keeping the original paragraph order. YOU MUST PARSE ALL FACTS FIRST, THEN REBUILD:
-   - RULE A: NEVER start your article with the same information as the original text.
-   - RULE B: INVERTED PYRAMID: You MUST extract the most shocking statistics, the core demand, or the final conclusion from the BOTTOM/MIDDLE of the original text and FORCE it to be your FIRST paragraph.
-   - RULE C: Group remaining facts logically. DO NOT paraphrase sentence-by-sentence."""
+    base_rules = "You are an elite, award-winning professional journalist and a master storyteller writing exclusively in the **Khmer language**.\nCRITICAL RULES:\n1. PERFECT KHMER: Use flawless standard Khmer spelling and grammar.\n2. SHATTER & INVERT THE STRUCTURE (CRITICAL): You are STRICTLY FORBIDDEN from keeping the original paragraph order. YOU MUST PARSE ALL FACTS FIRST, THEN REBUILD:\n   - RULE A: NEVER start your article with the same information as the original text.\n   - RULE B: INVERTED PYRAMID: You MUST extract the most shocking statistics, the core demand, or the final conclusion from the BOTTOM/MIDDLE of the original text and FORCE it to be your FIRST paragraph.\n   - RULE C: Group remaining facts logically. DO NOT paraphrase sentence-by-sentence.\n"
 
     if country != 'កម្ពុជា (Cambodia)':
         if mode == 'generate_new':
@@ -112,11 +153,9 @@ CRITICAL RULES:
         para_count = data.get('paragraph_count', 'auto')
         context_text = data.get('context', '').strip()
         post_date = data.get('post_date', '').strip() 
-        
         n_str = f"EXACTLY {int(para_count)+1} paragraphs." if str(para_count).isdigit() and int(para_count)>0 else "Expand naturally."
         ctx_str = f"\n   - CRITICAL CONTEXT: '{context_text}'." if context_text else ""
         date_str = f"\n   - DATE CONTEXT: '{post_date}'." if post_date else ""
-        
         structure_rules = f"\nSTORYTELLING & FORMAT RULES:\n4. Quote Expansion:\n   - {n_str}{ctx_str}{date_str}\n   - MUST introduce the quote EXACTLY as: \"{attr_phrase} {person_name} បានរៀបរាប់យ៉ាងដូច្នេះថា៖ [INSERT QUOTE HERE]\".\n   - Expand on its meaning using the inverted pyramid method.{enhancement_rules}{title_rule}"
     elif mode == 'generate_new':
         para_count = data.get('paragraph_count', 'auto')
@@ -149,7 +188,6 @@ CRITICAL RULES:
         )
         
         result_text = response.text.strip()
-        
         article_match = re.search(r'\[ARTICLE\](.*?)\[/ARTICLE\]', result_text, re.DOTALL | re.IGNORECASE)
         social_match = re.search(r'\[SOCIAL\](.*?)\[/SOCIAL\]', result_text, re.DOTALL | re.IGNORECASE)
         image_match = re.search(r'\[IMAGE_PROMPTS\](.*?)\[/IMAGE_PROMPTS\]', result_text, re.DOTALL | re.IGNORECASE)
@@ -235,6 +273,7 @@ def download_word():
         doc.save(file_stream)
         file_stream.seek(0)
         
+        # សម្រាប់ Mobile គឺ Return ជា File តែម្តង (អត់មានផ្ទាំង Save ទេ)
         return send_file(
             file_stream, 
             as_attachment=True, 
