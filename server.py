@@ -15,7 +15,6 @@ from bs4 import BeautifulSoup
 import docx
 from docx.shared import Pt, RGBColor
 from docx.oxml.ns import qn
-import imageio_ffmpeg
 
 app = Flask(__name__)
 CORS(app)
@@ -58,31 +57,38 @@ def download_audio():
     url = request.json.get('url', '').strip()
     if not url: return jsonify({'error': 'សូមបញ្ចូល Link ជាមុនសិន!'})
     if not os.path.exists(YTDLP_EXE):
-        return jsonify({'error': 'សូមចុចប៊ូតុង Update (ពណ៌ខៀវ) ដើម្បីទាញយកកម្មវិធី YT-DLP ជាមុនសិន!'})
+        return jsonify({'error': 'សូមចុចប៊ូតុង Update ដើម្បីទាញយកកម្មវិធី YT-DLP ជាមុនសិន!'})
 
     temp_dir = os.path.join(CONFIG_DIR, 'temp')
     os.makedirs(temp_dir, exist_ok=True)
     out_template = os.path.join(temp_dir, f"{uuid.uuid4().hex}.%(ext)s")
 
-    # ទាញយកផ្លូវរបស់ ffmpeg ចេញពី Library ដែលយើងទើបបន្ថែម
-    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-
-    # បន្ថែម --ffmpeg-location ដើម្បីអោយ yt-dlp ស្គាល់ម៉ាស៊ីនបំប្លែង
-    cmd = [YTDLP_EXE, '--ffmpeg-location', ffmpeg_path, '-x', '--audio-format', 'mp3', '--no-playlist', '-o', out_template, url]
+    # ទាញយកសម្លេងដើម (M4A) ផ្ទាល់ ដោយមិនបាច់បំប្លែង និងមិនបាច់ប្រើ ffmpeg នាំអោយគាំង Server
+    cmd = [YTDLP_EXE, '-f', 'bestaudio[ext=m4a]/bestaudio', '--no-playlist', '-o', out_template, url]
     
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        files = glob.glob(out_template.replace('%(ext)s', 'mp3'))
-        if not files: return jsonify({'error': 'មិនអាចទាញយកសំឡេងពីប្រភពនេះបានទេ! (អាចជាប់ Privacy)'})
         
-        with open(files[0], 'rb') as f:
+        # ស្វែងរកឯកសារដែលបានទាញយករួច
+        search_pattern = out_template.replace('.%(ext)s', '.*')
+        files = glob.glob(search_pattern)
+        
+        if not files: return jsonify({'error': 'មិនអាចទាញយកសំឡេងពីប្រភពនេះបានទេ!'})
+        
+        file_path = files[0]
+        ext = file_path.split('.')[-1].lower()
+        
+        # កំណត់ Mime Type អោយត្រូវដើម្បីបញ្ជូនទៅ Gemini
+        mime_type = 'audio/mp4' if ext == 'm4a' else f'audio/{ext}'
+        
+        with open(file_path, 'rb') as f:
             encoded = base64.b64encode(f.read()).decode('utf-8')
             
-        os.remove(files[0]) 
+        os.remove(file_path) 
         
-        return jsonify({'success': True, 'audio_base64': 'data:audio/mp3;base64,' + encoded})
+        return jsonify({'success': True, 'audio_base64': f'data:{mime_type};base64,{encoded}'})
     except Exception as e:
-        return jsonify({'error': 'មានបញ្ហាក្នុងការទាញយក! សូមប្រាកដថា Link ត្រូវនិងមិនមែនជា Private វីដេអូ។'})
+        return jsonify({'error': f'មានបញ្ហា: ទិន្នន័យឯកជន ឬមិនអាចទាញយកបាន។'})
 
 @app.route('/scan_models', methods=['POST'])
 def scan_models():
@@ -177,9 +183,16 @@ def rewrite_article():
         
         contents = []
         if audio_base64:
-            b64_data = audio_base64.split(',')[1] if ',' in audio_base64 else audio_base64
+            # ក្បួនទាញយក Mime Type ពិតប្រាកដ (មិនខ្វល់ថា App Android ចាស់បញ្ជូនមកខុស)
+            true_mime = audio_mime
+            if audio_base64.startswith('data:'):
+                true_mime = audio_base64.split(';')[0].split(':')[1]
+                b64_data = audio_base64.split(',')[1]
+            else:
+                b64_data = audio_base64
+                
             audio_bytes = base64.b64decode(b64_data)
-            contents.append({"mime_type": audio_mime, "data": audio_bytes})
+            contents.append({"mime_type": true_mime, "data": audio_bytes})
         
         if original_text:
             contents.append(original_text)
