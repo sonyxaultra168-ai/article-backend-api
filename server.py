@@ -3,6 +3,7 @@ import re
 import io
 import base64
 import uuid
+import glob
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import google.generativeai as genai
@@ -11,7 +12,7 @@ from bs4 import BeautifulSoup
 import docx
 from docx.shared import Pt, RGBColor
 from docx.oxml.ns import qn
-import yt_dlp # ទាញយក YT-DLP តាមរយៈ Python Library ផ្ទាល់
+import yt_dlp
 
 app = Flask(__name__)
 CORS(app)
@@ -39,7 +40,6 @@ def fetch_url():
 
 @app.route('/update_ytdlp', methods=['POST'])
 def update_ytdlp():
-    # លែងត្រូវការអោយ App Android បញ្ជាមក Update ទៀតហើយ ព្រោះវាភ្ជាប់មកជាមួយ Python ស្រាប់
     return jsonify({'success': True})
 
 @app.route('/download_audio', methods=['POST'])
@@ -51,25 +51,37 @@ def download_audio():
     os.makedirs(temp_dir, exist_ok=True)
     out_template = os.path.join(temp_dir, f"{uuid.uuid4().hex}")
 
-    # កំណត់ក្បួនទាញយកសម្លេង (គុណភាពល្អបំផុតដែល YouTube មាន)
+    # 🚨 ក្បួនបន្លំភ្នែក YouTube អោយគិតថាវាជាទូរស័ព្ទ Android មិនមែន Server 🚨
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'm4a/bestaudio/best',
         'outtmpl': out_template + '.%(ext)s',
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
-        'extract_flat': False
+        'extract_flat': False,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'] # បន្លំធ្វើជា Android App
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
+        }
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # ដំណើរការទាញយក
             info_dict = ydl.extract_info(url, download=True)
             ext = info_dict.get('ext', 'm4a')
-            file_path = f"{out_template}.{ext}"
             
-            # កំណត់ប្រភេទឯកសារ
-            mime_type = 'audio/mp4' if ext == 'm4a' else f'audio/{ext}'
+            search_pattern = f"{out_template}.*"
+            files = glob.glob(search_pattern)
+            
+            if not files: return jsonify({'error': 'មិនអាចទាញយកសំឡេងពីប្រភពនេះបានទេ!'})
+            
+            file_path = files[0]
+            real_ext = file_path.split('.')[-1].lower()
+            mime_type = 'audio/mp4' if real_ext == 'm4a' else f'audio/{real_ext}'
             
             with open(file_path, 'rb') as f:
                 encoded = base64.b64encode(f.read()).decode('utf-8')
@@ -78,7 +90,6 @@ def download_audio():
             return jsonify({'success': True, 'audio_base64': f'data:{mime_type};base64,{encoded}'})
             
     except Exception as e:
-        # បោះសារ Error ពិតប្រាកដចេញមក ដើម្បីអោយយើងដឹងថា YouTube រាំងខ្ទប់ ឬបញ្ហាអ្វី
         error_msg = str(e).replace('"', "'")
         return jsonify({'error': f"បរាជ័យមូលហេតុ: {error_msg}"})
 
