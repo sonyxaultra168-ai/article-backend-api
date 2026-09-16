@@ -235,12 +235,17 @@ def rewrite_article():
             return jsonify({'error': "API Key អស់កូតាហើយ! សូមប្តូរ Key ថ្មី។ ⚠️"})
         return jsonify({'error': f"បរាជ័យ: {str(e)[:100]}"})
 
-@app.route('/download_word', methods=['POST'])
-def download_word():
+# ==========================================
+# 🚨 មុខងារថ្មីសម្រាប់បញ្ជូន File Word អោយ Mobile 🚨
+# ==========================================
+
+@app.route('/generate_word_link', methods=['POST'])
+def generate_word_link():
     try:
         import docx
         from docx.shared import Pt, RGBColor
         from docx.oxml.ns import qn
+        import uuid
         
         data = request.json
         text = data.get('text', '')
@@ -278,19 +283,29 @@ def download_word():
                 p = doc.add_paragraph()
                 add_khmer_run(p, p_text, 12)
 
-        file_stream = io.BytesIO()
-        doc.save(file_stream)
-        file_stream.seek(0)
+        # បង្កើតឈ្មោះ File ប្លែកៗគ្នា ដើម្បីកុំអោយជាន់គ្នាលើ Server
+        filename = f"Article_Rewriter_PRO_{uuid.uuid4().hex[:8]}.docx"
+        filepath = os.path.join(CONFIG_DIR, filename)
+        doc.save(filepath)
         
+        # បោះលីងត្រឡប់ទៅអោយទូរស័ព្ទវិញ ដើម្បីអោយទូរស័ព្ទបើកទាញយក
+        return jsonify({'success': True, 'download_url': f"/get_word_file/{filename}"})
+
+    except Exception as e:
+        return jsonify({'error': f"កំហុសប្រព័ន្ធ: {str(e)}"}), 500
+
+@app.route('/get_word_file/<filename>', methods=['GET'])
+def get_word_file(filename):
+    try:
+        filepath = os.path.join(CONFIG_DIR, filename)
         return send_file(
-            file_stream, 
+            filepath, 
             as_attachment=True, 
             download_name='Article_Rewriter_PRO.docx', 
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         )
-
     except Exception as e:
-        return jsonify({'error': f"កំហុសប្រព័ន្ធ: {str(e)}"}), 500
+        return "File មិនមាន ឬផុតកំណត់ហើយ។", 404
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
