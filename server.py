@@ -35,6 +35,7 @@ def fetch_url():
 
 @app.route('/update_ytdlp', methods=['POST'])
 def update_ytdlp():
+    # លែងត្រូវការកម្មវិធី YTDLP ទៀតហើយ!
     return jsonify({'success': True})
 
 @app.route('/download_audio', methods=['POST'])
@@ -42,64 +43,47 @@ def download_audio():
     url = request.json.get('url', '').strip()
     if not url: return jsonify({'error': 'សូមបញ្ចូល Link ជាមុនសិន!'})
 
-    # បញ្ជីម៉ាស៊ីន API ទាំង ៤ សម្រាប់បម្រុងទុកពេលមានបញ្ហា
-    instances = [
-        "https://api.cobalt.tools",
-        "https://co.wuk.sh",
-        "https://cobalt.kwiatechu.com",
-        "https://api.wuk.sh"
-    ]
-    
-    headers = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    
-    payload = {
-        "url": url,
-        "isAudioOnly": True,
-        "aFormat": "mp3"
-    }
-
-    last_error = ""
-
-    # ប្រព័ន្ធឆ្លាតវៃ៖ លោតសាកល្បងពីម៉ាស៊ីនមួយទៅម៉ាស៊ីនមួយទៀតដោយស្វ័យប្រវត្តិ
-    for instance in instances:
-        try:
-            api_url = f"{instance}/"
-            res = requests.post(api_url, json=payload, headers=headers, timeout=15)
+    try:
+        # 🚨 ប្រើប្រាស់ Third-Party API (Cobalt) ដើម្បីទាញយកជំនួស Server របស់យើង
+        headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Origin': 'https://cobalt.tools',
+            'Referer': 'https://cobalt.tools/'
+        }
+        
+        # ប្រាប់ API អោយទាញយកតែសម្លេង (Audio Only) ជាទម្រង់ MP3
+        payload = {
+            "url": url,
+            "isAudioOnly": True,
+            "aFormat": "mp3"
+        }
+        
+        # បញ្ជូនសំណើទៅកាន់ម៉ាស៊ីន API ខាងក្រៅ
+        api_res = requests.post('https://api.cobalt.tools/', json=payload, headers=headers, timeout=20)
+        api_res.raise_for_status()
+        data = api_res.json()
+        
+        if data.get('status') == 'error':
+            return jsonify({'error': f"API បដិសេធ: {data.get('text', 'មិនស្គាល់ Link នេះទេ')}"})
             
-            # បើម៉ាស៊ីនថ្មីអត់ស្គាល់ សាកល្បងប្រើផ្លូវចាស់ (v7)
-            if res.status_code == 404:
-                api_url = f"{instance}/api/json"
-                res = requests.post(api_url, json=payload, headers=headers, timeout=15)
-                
-            res.raise_for_status()
-            data = res.json()
+        download_link = data.get('url')
+        
+        if not download_link:
+            return jsonify({'error': 'មិនអាចរកឃើញទិន្នន័យ MP3 ពីប្រភពនេះទេ!'})
             
-            if data.get('status') == 'error':
-                last_error = data.get('text', 'API Error')
-                continue # លោតទៅម៉ាស៊ីនបន្ទាប់
-                
-            download_link = data.get('url')
-            if not download_link:
-                continue # លោតទៅម៉ាស៊ីនបន្ទាប់
-                
-            # ពេលបានលីងហើយ ទាញយក MP3 មកកាន់ Server
-            audio_res = requests.get(download_link, timeout=30)
-            audio_res.raise_for_status()
-            
-            # បំប្លែងបញ្ជូនទៅ App ទូរស័ព្ទ
-            encoded = base64.b64encode(audio_res.content).decode('utf-8')
-            return jsonify({'success': True, 'audio_base64': 'data:audio/mp3;base64,' + encoded})
-            
-        except Exception as e:
-            last_error = str(e)[:60]
-            continue # លោតទៅម៉ាស៊ីនបន្ទាប់បើមាន Error
-            
-    # បើម៉ាស៊ីនទាំង ៤ ងាប់ទាំងអស់ វានឹងបោះសារ Error ពិតប្រាកដចេញមក
-    return jsonify({'error': f"បរាជ័យ: ម៉ាស៊ីន API ទាំង ៤ កំពុងរវល់។ ({last_error})"})
+        # ពេល API បោះលីង MP3 អោយ យើងគ្រាន់តែទាញយកវាចូលមក Memory
+        audio_res = requests.get(download_link, timeout=30)
+        audio_res.raise_for_status()
+        
+        encoded = base64.b64encode(audio_res.content).decode('utf-8')
+        
+        return jsonify({'success': True, 'audio_base64': 'data:audio/mp3;base64,' + encoded})
+        
+    except Exception as e:
+        error_msg = str(e)[:100]
+        return jsonify({'error': f"បរាជ័យ: Link ខុស ឬម៉ាស៊ីន API កំពុងជាប់រវល់។ ({error_msg})"})
 
 @app.route('/scan_models', methods=['POST'])
 def scan_models():
