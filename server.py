@@ -15,12 +15,12 @@ from bs4 import BeautifulSoup
 import docx
 from docx.shared import Pt, RGBColor
 from docx.oxml.ns import qn
+import imageio_ffmpeg
 
 app = Flask(__name__)
-# អនុញ្ញាតឱ្យ Android App អាចហៅទិន្នន័យបាន (Cross-Origin)
 CORS(app)
 
-CONFIG_DIR = '/tmp' # ប្រើ Folder បណ្តោះអាសន្នលើ Cloud
+CONFIG_DIR = '/tmp'
 YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
 YTDLP_EXE = os.path.join(CONFIG_DIR, "yt-dlp")
 
@@ -64,7 +64,12 @@ def download_audio():
     os.makedirs(temp_dir, exist_ok=True)
     out_template = os.path.join(temp_dir, f"{uuid.uuid4().hex}.%(ext)s")
 
-    cmd = [YTDLP_EXE, '-x', '--audio-format', 'mp3', '--no-playlist', '-o', out_template, url]
+    # ទាញយកផ្លូវរបស់ ffmpeg ចេញពី Library ដែលយើងទើបបន្ថែម
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+
+    # បន្ថែម --ffmpeg-location ដើម្បីអោយ yt-dlp ស្គាល់ម៉ាស៊ីនបំប្លែង
+    cmd = [YTDLP_EXE, '--ffmpeg-location', ffmpeg_path, '-x', '--audio-format', 'mp3', '--no-playlist', '-o', out_template, url]
+    
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         files = glob.glob(out_template.replace('%(ext)s', 'mp3'))
@@ -273,7 +278,6 @@ def download_word():
         doc.save(file_stream)
         file_stream.seek(0)
         
-        # សម្រាប់ Mobile គឺ Return ជា File តែម្តង (អត់មានផ្ទាំង Save ទេ)
         return send_file(
             file_stream, 
             as_attachment=True, 
