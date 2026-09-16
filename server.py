@@ -2,6 +2,8 @@ import os
 import re
 import io
 import base64
+import uuid
+import glob
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import google.generativeai as genai
@@ -10,9 +12,12 @@ from bs4 import BeautifulSoup
 import docx
 from docx.shared import Pt, RGBColor
 from docx.oxml.ns import qn
+import yt_dlp
 
 app = Flask(__name__)
 CORS(app)
+
+CONFIG_DIR = '/tmp'
 
 @app.route('/')
 def index():
@@ -35,7 +40,6 @@ def fetch_url():
 
 @app.route('/update_ytdlp', methods=['POST'])
 def update_ytdlp():
-    # លែងត្រូវការកម្មវិធី YTDLP ទៀតហើយ!
     return jsonify({'success': True})
 
 @app.route('/download_audio', methods=['POST'])
@@ -43,47 +47,51 @@ def download_audio():
     url = request.json.get('url', '').strip()
     if not url: return jsonify({'error': 'សូមបញ្ចូល Link ជាមុនសិន!'})
 
+    temp_dir = os.path.join(CONFIG_DIR, 'temp')
+    os.makedirs(temp_dir, exist_ok=True)
+    out_template = os.path.join(temp_dir, f"{uuid.uuid4().hex}")
+
+    # 🚨 ក្បួនបន្លំភ្នែក YouTube អោយគិតថាវាជាទូរស័ព្ទ Android មិនមែន Server 🚨
+    ydl_opts = {
+        'format': 'm4a/bestaudio/best',
+        'outtmpl': out_template + '.%(ext)s',
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'] # បន្លំធ្វើជា Android App
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
+        }
+    }
+
     try:
-        # 🚨 ប្រើប្រាស់ Third-Party API (Cobalt) ដើម្បីទាញយកជំនួស Server របស់យើង
-        headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Origin': 'https://cobalt.tools',
-            'Referer': 'https://cobalt.tools/'
-        }
-        
-        # ប្រាប់ API អោយទាញយកតែសម្លេង (Audio Only) ជាទម្រង់ MP3
-        payload = {
-            "url": url,
-            "isAudioOnly": True,
-            "aFormat": "mp3"
-        }
-        
-        # បញ្ជូនសំណើទៅកាន់ម៉ាស៊ីន API ខាងក្រៅ
-        api_res = requests.post('https://api.cobalt.tools/', json=payload, headers=headers, timeout=20)
-        api_res.raise_for_status()
-        data = api_res.json()
-        
-        if data.get('status') == 'error':
-            return jsonify({'error': f"API បដិសេធ: {data.get('text', 'មិនស្គាល់ Link នេះទេ')}"})
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=True)
+            ext = info_dict.get('ext', 'm4a')
             
-        download_link = data.get('url')
-        
-        if not download_link:
-            return jsonify({'error': 'មិនអាចរកឃើញទិន្នន័យ MP3 ពីប្រភពនេះទេ!'})
+            search_pattern = f"{out_template}.*"
+            files = glob.glob(search_pattern)
             
-        # ពេល API បោះលីង MP3 អោយ យើងគ្រាន់តែទាញយកវាចូលមក Memory
-        audio_res = requests.get(download_link, timeout=30)
-        audio_res.raise_for_status()
-        
-        encoded = base64.b64encode(audio_res.content).decode('utf-8')
-        
-        return jsonify({'success': True, 'audio_base64': 'data:audio/mp3;base64,' + encoded})
-        
+            if not files: return jsonify({'error': 'មិនអាចទាញយកសំឡេងពីប្រភពនេះបានទេ!'})
+            
+            file_path = files[0]
+            real_ext = file_path.split('.')[-1].lower()
+            mime_type = 'audio/mp4' if real_ext == 'm4a' else f'audio/{real_ext}'
+            
+            with open(file_path, 'rb') as f:
+                encoded = base64.b64encode(f.read()).decode('utf-8')
+                
+            os.remove(file_path)
+            return jsonify({'success': True, 'audio_base64': f'data:{mime_type};base64,{encoded}'})
+            
     except Exception as e:
-        error_msg = str(e)[:100]
-        return jsonify({'error': f"បរាជ័យ: Link ខុស ឬម៉ាស៊ីន API កំពុងជាប់រវល់។ ({error_msg})"})
+        error_msg = str(e).replace('"', "'")
+        return jsonify({'error': f"បរាជ័យមូលហេតុ: {error_msg}"})
 
 @app.route('/scan_models', methods=['POST'])
 def scan_models():
