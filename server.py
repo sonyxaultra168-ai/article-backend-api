@@ -3,10 +3,6 @@ import re
 import io
 import base64
 import uuid
-import glob
-import subprocess
-import urllib.request
-import stat
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import google.generativeai as genai
@@ -15,13 +11,12 @@ from bs4 import BeautifulSoup
 import docx
 from docx.shared import Pt, RGBColor
 from docx.oxml.ns import qn
+import yt_dlp # ទាញយក YT-DLP តាមរយៈ Python Library ផ្ទាល់
 
 app = Flask(__name__)
 CORS(app)
 
 CONFIG_DIR = '/tmp'
-YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
-YTDLP_EXE = os.path.join(CONFIG_DIR, "yt-dlp")
 
 @app.route('/')
 def index():
@@ -44,51 +39,48 @@ def fetch_url():
 
 @app.route('/update_ytdlp', methods=['POST'])
 def update_ytdlp():
-    try:
-        urllib.request.urlretrieve(YTDLP_URL, YTDLP_EXE)
-        st = os.stat(YTDLP_EXE)
-        os.chmod(YTDLP_EXE, st.st_mode | stat.S_IEXEC)
-        return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'error': f"មិនអាច Update បានទេ: {str(e)}"})
+    # លែងត្រូវការអោយ App Android បញ្ជាមក Update ទៀតហើយ ព្រោះវាភ្ជាប់មកជាមួយ Python ស្រាប់
+    return jsonify({'success': True})
 
 @app.route('/download_audio', methods=['POST'])
 def download_audio():
     url = request.json.get('url', '').strip()
     if not url: return jsonify({'error': 'សូមបញ្ចូល Link ជាមុនសិន!'})
-    if not os.path.exists(YTDLP_EXE):
-        return jsonify({'error': 'សូមចុចប៊ូតុង Update ដើម្បីទាញយកកម្មវិធី YT-DLP ជាមុនសិន!'})
 
     temp_dir = os.path.join(CONFIG_DIR, 'temp')
     os.makedirs(temp_dir, exist_ok=True)
-    out_template = os.path.join(temp_dir, f"{uuid.uuid4().hex}.%(ext)s")
+    out_template = os.path.join(temp_dir, f"{uuid.uuid4().hex}")
 
-    # ទាញយកសម្លេងដើម (M4A) ផ្ទាល់ ដោយមិនបាច់បំប្លែង និងមិនបាច់ប្រើ ffmpeg នាំអោយគាំង Server
-    cmd = [YTDLP_EXE, '-f', 'bestaudio[ext=m4a]/bestaudio', '--no-playlist', '-o', out_template, url]
-    
+    # កំណត់ក្បួនទាញយកសម្លេង (គុណភាពល្អបំផុតដែល YouTube មាន)
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': out_template + '.%(ext)s',
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False
+    }
+
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        # ស្វែងរកឯកសារដែលបានទាញយករួច
-        search_pattern = out_template.replace('.%(ext)s', '.*')
-        files = glob.glob(search_pattern)
-        
-        if not files: return jsonify({'error': 'មិនអាចទាញយកសំឡេងពីប្រភពនេះបានទេ!'})
-        
-        file_path = files[0]
-        ext = file_path.split('.')[-1].lower()
-        
-        # កំណត់ Mime Type អោយត្រូវដើម្បីបញ្ជូនទៅ Gemini
-        mime_type = 'audio/mp4' if ext == 'm4a' else f'audio/{ext}'
-        
-        with open(file_path, 'rb') as f:
-            encoded = base64.b64encode(f.read()).decode('utf-8')
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # ដំណើរការទាញយក
+            info_dict = ydl.extract_info(url, download=True)
+            ext = info_dict.get('ext', 'm4a')
+            file_path = f"{out_template}.{ext}"
             
-        os.remove(file_path) 
-        
-        return jsonify({'success': True, 'audio_base64': f'data:{mime_type};base64,{encoded}'})
+            # កំណត់ប្រភេទឯកសារ
+            mime_type = 'audio/mp4' if ext == 'm4a' else f'audio/{ext}'
+            
+            with open(file_path, 'rb') as f:
+                encoded = base64.b64encode(f.read()).decode('utf-8')
+                
+            os.remove(file_path)
+            return jsonify({'success': True, 'audio_base64': f'data:{mime_type};base64,{encoded}'})
+            
     except Exception as e:
-        return jsonify({'error': f'មានបញ្ហា: ទិន្នន័យឯកជន ឬមិនអាចទាញយកបាន។'})
+        # បោះសារ Error ពិតប្រាកដចេញមក ដើម្បីអោយយើងដឹងថា YouTube រាំងខ្ទប់ ឬបញ្ហាអ្វី
+        error_msg = str(e).replace('"', "'")
+        return jsonify({'error': f"បរាជ័យមូលហេតុ: {error_msg}"})
 
 @app.route('/scan_models', methods=['POST'])
 def scan_models():
@@ -183,7 +175,6 @@ def rewrite_article():
         
         contents = []
         if audio_base64:
-            # ក្បួនទាញយក Mime Type ពិតប្រាកដ (មិនខ្វល់ថា App Android ចាស់បញ្ជូនមកខុស)
             true_mime = audio_mime
             if audio_base64.startswith('data:'):
                 true_mime = audio_base64.split(';')[0].split(':')[1]
